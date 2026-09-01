@@ -145,6 +145,42 @@ def style_center_symbol(
     }
 
 
+def _get_requirement_state(obj: m.ModelElement) -> str | None:
+    """Return the value of the ``ReqState`` attribute, if any."""
+    attributes = getattr(obj, "attributes", None)
+    if not attributes:
+        return None
+
+    for attr in attributes:
+        definition = getattr(attr, "definition", None)
+        if definition is None or definition.long_name != "ReqState":
+            continue
+
+        values = getattr(attr, "values", None)
+        if values:
+            return values[0].long_name
+
+        return getattr(attr, "value", None)
+
+    return None
+
+
+def deprecated_requirement_greys_out(
+    obj: m.ModelElement, serializer: serializers.DiagramSerializer
+) -> CSSStyles:
+    """Grey out and cross-out Requirements with ``ReqState`` "Deprecated"."""
+    del serializer
+    if _get_requirement_state(obj) != "Deprecated":
+        return None
+
+    return {
+        "fill": capstyle.COLORS["gray"],
+        "stroke": capstyle.COLORS["dark_gray"],
+        "text_fill": capstyle.COLORS["dark_gray"],
+        "text-decoration": "line-through",
+    }
+
+
 def _extract_direct_pvmt_styles(
     obj: m.ModelElement,
     pvmt_styling: _PVMTStyling,
@@ -220,4 +256,12 @@ SYSTEM_CAP_STYLING: dict[str, Styler] = {"node": style_center_symbol}
 """CSSStyle for custom styling of SystemAnalysis diagrams.
 
 The center box is drawn with a white background and a grey dashed line.
+"""
+REQUIREMENT_STYLING: dict[str, Styler] = {
+    "node": deprecated_requirement_greys_out
+}
+"""CSSStyle for custom styling of Requirement Context diagrams.
+
+Requirements with ``ReqState`` "Deprecated" are greyed out and shown
+with a cross-out (strike-through) label.
 """

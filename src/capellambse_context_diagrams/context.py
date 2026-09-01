@@ -43,6 +43,7 @@ STANDARD_FILTERS = {
 STANDARD_STYLES = {
     "Operational Capabilities Blank": styling.SYSTEM_CAP_STYLING,
     "Missions Capabilities Blank": styling.SYSTEM_CAP_STYLING,
+    "Requirement Context": styling.REQUIREMENT_STYLING,
 }
 
 CollectorOutputData: t.TypeAlias = (
