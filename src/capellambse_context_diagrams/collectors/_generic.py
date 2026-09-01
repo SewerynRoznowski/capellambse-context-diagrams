@@ -14,7 +14,7 @@ import logging
 import typing as t
 
 import capellambse.model as m
-from capellambse.metamodel import cs, fa, interaction
+from capellambse.metamodel import cs, fa, interaction, modellingcore
 
 from .. import _elkjs, context, filters
 from ..builders import _makers
@@ -209,10 +209,27 @@ def collect_label(obj: m.ModelElement) -> str | None:
         return "« e »"
     if isinstance(obj, interaction.AbstractCapabilityInclude):
         return "« i »"
+    
+    # Handle InternalRelation (requirement relations)
+    # Check by class name to avoid import issues
+    if type(obj).__name__ == "InternalRelation":
+        # InternalRelation doesn't have a name, but has a type with long_name
+        if hasattr(obj, "type") and obj.type is not None:
+            # Try long_name first, fall back to str representation
+            if hasattr(obj.type, "long_name") and obj.type.long_name:
+                return obj.type.long_name
+            return str(obj.type)
+        return ""
+    
     if isinstance(obj, fa.FunctionalChainInvolvementLink):
         if obj.involved is not None:
             return collect_label(obj.involved)
-        return "" if obj.name.startswith("(Unnamed") else obj.name
+        if isinstance(obj, modellingcore.AbstractNamedElement):
+            return "" if obj.name.startswith("(Unnamed") else obj.name
+        return ""
+    # Only access name if object is a NamedElement to avoid warnings
+    if not isinstance(obj, modellingcore.AbstractNamedElement):
+        return ""
     return "" if obj.name.startswith("(Unnamed") else obj.name
 
 
@@ -263,7 +280,8 @@ def get_all_owners(obj: m.ModelElement) -> cabc.Iterator[str]:
     current: m.ModelElement | None = obj
     while current is not None:
         yield current.uuid
-        current = getattr(current, "owner", None)
+        # Try 'parent' first (for Requirements), fall back to 'owner'
+        current = getattr(current, "parent", None) or getattr(current, "owner", None)
 
 
 def port_collector(

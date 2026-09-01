@@ -72,6 +72,7 @@ def init() -> None:
     register_cable_tree_view()
     register_diagram_layout_accessor()
     register_functional_chain_view()
+    register_requirement_context()
 
 
 def register_classes() -> None:
@@ -229,4 +230,33 @@ def register_functional_chain_view() -> None:
     ) in _registry.FUNCTIONAL_CHAIN_CONTEXT_CLASSES:
         class_.context_diagram = context.FunctionalChainContextAccessor(
             dgclasses, default_render_params
+        )
+
+
+def register_requirement_context() -> None:
+    """Add the ``context_diagram`` attribute to ``Requirement``s."""
+    if not _registry.HAS_REQUIREMENTS:
+        logger.warning("Requirements extension not available, skipping requirement context diagrams")
+        return
+    
+    # Add styling for requirement diagrams. Box.Requirement styling is
+    # inherited from __GLOBAL__ (defined upstream in py-capellambse); only
+    # the relation edge needs a diagram-specific style here.
+    requirement_styles = {
+        "Edge.InternalRelation": {
+            "stroke": COLORS["dark_gray"],
+            "marker-end": "FineArrowMark",
+        },
+    }
+    capstyle.STYLES["Requirement Context"] = (
+        capstyle.STYLES.get("__GLOBAL__", {}) | requirement_styles
+    )
+    
+    for (
+        class_,
+        dgcls,
+        default_render_params,
+    ) in _registry.REQUIREMENT_CONTEXT_CLASSES:
+        class_.context_diagram = context.ContextAccessor(
+            dgcls, default_render_params
         )

@@ -12,9 +12,18 @@ from capellambse.model import DiagramType
 
 from . import enums, styling
 
+try:
+    from capellambse.extensions.reqif import requirements as req_mod
+    HAS_REQUIREMENTS = True
+except ImportError:
+    HAS_REQUIREMENTS = False
+
 DefaultRenderParams = dict[str, t.Any]
 SupportedContextClass = tuple[
     type[m.ModelElement], DiagramType, DefaultRenderParams
+]
+SupportedContextClassStr = tuple[
+    type[m.ModelElement], str, DefaultRenderParams
 ]
 SupportedInterfaceContextClass = tuple[
     type[m.ModelElement], dict[type[m.ModelElement], str], DefaultRenderParams
@@ -164,3 +173,17 @@ DIAGRAM_LAYOUT_PARAMS: dict[DiagramType, DefaultRenderParams] = {
     m.DiagramType.LAB: {"display_symbols_as_boxes": True},
     m.DiagramType.PAB: {"display_port_labels": True},
 }
+REQUIREMENT_CONTEXT_CLASSES: list[SupportedContextClassStr] = []
+if HAS_REQUIREMENTS:
+    from .collectors import requirements as req_collector
+    
+    REQUIREMENT_CONTEXT_CLASSES = [
+        (
+            req_mod.Requirement,
+            "Requirement Context",
+            {
+                "collect": req_collector.collector,
+                "is_portless": True,
+            },
+        ),
+    ]

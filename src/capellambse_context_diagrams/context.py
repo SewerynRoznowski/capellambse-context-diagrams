@@ -471,8 +471,12 @@ class ContextDiagram(m.AbstractDiagram):
         """Return the type of this diagram."""
         try:
             return m.DiagramType(self.styleclass)
-        except ValueError:  # pragma: no cover
-            logger.warning("Unknown diagram type %r", self.styleclass)
+        except ValueError:
+            # Custom diagram types (like "Requirement Context", "RealizationView Diagram")
+            # use custom styleclass names and return UNKNOWN type, which is expected
+            from capellambse.diagram import capstyle
+            if self.styleclass not in capstyle.STYLES:
+                logger.warning("Unknown diagram type %r - no styles defined", self.styleclass)
             return m.DiagramType.UNKNOWN
 
     @property

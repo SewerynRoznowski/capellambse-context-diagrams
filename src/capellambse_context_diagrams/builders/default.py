@@ -59,13 +59,15 @@ def get_top_uncommon_owner(
 ) -> m.ModelElement:
     """Return the top-level owner of ``src`` not in ``tgt_owners``."""
     current = src
+    # Try 'parent' first (for Requirements), fall back to 'owner'
+    owner = getattr(current, "parent", None) or getattr(current, "owner", None)
     while (
-        hasattr(current, "owner")
-        and current.owner is not None
-        and current.owner.uuid not in tgt_owners
-        and not isinstance(current.owner, _makers.PackageTypes)
+        owner is not None
+        and owner.uuid not in tgt_owners
+        and not isinstance(owner, _makers.PackageTypes)
     ):
-        current = current.owner
+        current = owner
+        owner = getattr(current, "parent", None) or getattr(current, "owner", None)
     return current
 
 
