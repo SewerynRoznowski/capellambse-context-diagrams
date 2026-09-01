@@ -210,10 +210,15 @@ def collect_label(obj: m.ModelElement) -> str | None:
     if isinstance(obj, interaction.AbstractCapabilityInclude):
         return "« i »"
     
-    # Handle InternalRelation (requirement relations)
-    # Check by class name to avoid import issues
-    if type(obj).__name__ == "InternalRelation":
-        # InternalRelation doesn't have a name, but has a type with long_name
+    # Handle requirement relations: InternalRelation (requirement <->
+    # requirement) as well as CapellaIncomingRelation/CapellaOutgoingRelation
+    # (requirement <-> other model elements). All of these derive from
+    # AbstractRelation and don't have a `.name`, but carry a `.type` with a
+    # `.long_name` instead. Check by base class name to avoid a hard
+    # dependency on the optional reqif extension.
+    if any(
+        cls.__name__ == "AbstractRelation" for cls in type(obj).__mro__
+    ):
         if hasattr(obj, "type") and obj.type is not None:
             # Try long_name first, fall back to str representation
             if hasattr(obj.type, "long_name") and obj.type.long_name:
