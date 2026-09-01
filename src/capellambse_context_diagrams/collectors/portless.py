@@ -50,6 +50,8 @@ def collect_exchange_endpoints(
                 continue
         raise AttributeError()
 
+    if type(e).__name__ == "CapellaOutgoingRelation":
+        return e.target, e.source
     try:
         return _get(e, SOURCE_ATTR_NAMES), _get(e, TARGET_ATTR_NAMES)
     except AttributeError:

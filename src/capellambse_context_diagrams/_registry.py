@@ -184,6 +184,7 @@ if HAS_REQUIREMENTS:
             {
                 "collect": req_collector.collector,
                 "is_portless": True,
+                "edge_direction": enums.EDGE_DIRECTION.NONE,
             },
         ),
     ]
