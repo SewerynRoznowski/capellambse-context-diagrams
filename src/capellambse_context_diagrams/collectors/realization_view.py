@@ -15,7 +15,21 @@ from capellambse.metamodel import cs, fa, oa
 from .. import _elkjs, context
 from ..builders import _makers
 
+try:
+    from capellambse.extensions.reqif import requirements as req_mod
+    from capellambse.extensions.reqif.capellarequirements import (
+        CapellaIncomingRelation,
+        CapellaOutgoingRelation,
+    )
+
+    HAS_REQUIREMENTS = True
+except ImportError:
+    HAS_REQUIREMENTS = False
+
 RE_LAYER_PTRN = re.compile(r"([A-Z]?[a-z]+)")
+LAYER_ORDER: t.Final = ("Operational", "System", "Logical", "Physical")
+REQUIREMENTS_LAYER: t.Final = "Requirements"
+REQUIREMENTS_LAYER_ID: t.Final = "__requirements_layer__"
 
 
 def collector(
@@ -31,19 +45,27 @@ def collector(
     del layout_options["widthApproximation.targetWidth"]
     data.layoutOptions = layout_options
     _collector = COLLECTORS[diagram._search_direction]
-    lay_to_els = _collector(diagram.target, diagram._depth)
+    lay_to_els = _collector(
+        diagram.target, diagram._depth, diagram._include_requirements
+    )
     layer_layout_options: _elkjs.LayoutOptions = layout_options | {  # type: ignore[operator]
         "nodeSize.constraints": "[NODE_LABELS,MINIMUM_SIZE]",
     }
     edges: list[_elkjs.ELKInputEdge] = []
-    for layer in ("Operational", "System", "Logical", "Physical"):
+    seen_edge_ids: set[str] = set()
+    for layer in (*LAYER_ORDER, REQUIREMENTS_LAYER):
         if not (elements := lay_to_els.get(layer)):
             continue
 
         labels = _makers.make_label(layer)
         width, height = _makers.calculate_height_and_width(labels)
+        layer_box_id = (
+            REQUIREMENTS_LAYER_ID
+            if layer == REQUIREMENTS_LAYER
+            else elements[0]["layer"].uuid
+        )
         layer_box = _elkjs.ELKInputChild(
-            id=elements[0]["layer"].uuid,
+            id=layer_box_id,
             children=[],
             height=width,
             width=height,
@@ -52,14 +74,48 @@ def collector(
         children: dict[str, _elkjs.ELKInputChild] = {}
         for elt in elements:
             assert elt["element"] is not None
+            element_is_req = HAS_REQUIREMENTS and isinstance(
+                elt["element"], req_mod.Requirement
+            )
+            origin_is_req = (
+                HAS_REQUIREMENTS
+                and elt["origin"] is not None
+                and isinstance(elt["origin"], req_mod.Requirement)
+            )
+            is_requirement_edge = element_is_req or origin_is_req
             if elt["origin"] is not None:
-                edges.append(
-                    _elkjs.ELKInputEdge(
-                        id=f"{elt['origin'].uuid}_{elt['element'].uuid}",
-                        sources=[elt["origin"].uuid],
-                        targets=[elt["element"].uuid],
+                if is_requirement_edge:
+                    req_obj = elt["element"] if element_is_req else elt["origin"]
+                    other_obj = (
+                        elt["origin"] if element_is_req else elt["element"]
                     )
-                )
+                    # An incoming relation originates from the Requirement
+                    # (REQ -> object); an outgoing relation originates from
+                    # the object (object -> REQ). This mirrors the actual
+                    # relation, regardless of whether the hop was found
+                    # going ABOVE or BELOW.
+                    if elt.get("relation_kind") == "outgoing":
+                        edge_source, edge_target = other_obj, req_obj
+                    else:
+                        edge_source, edge_target = req_obj, other_obj
+                else:
+                    edge_source, edge_target = elt["origin"], elt["element"]
+
+                edge_id = f"{edge_source.uuid}_{edge_target.uuid}"
+                if edge_id not in seen_edge_ids:
+                    seen_edge_ids.add(edge_id)
+                    edges.append(
+                        _elkjs.ELKInputEdge(
+                            id=edge_id,
+                            sources=[edge_source.uuid],
+                            targets=[edge_target.uuid],
+                            **(
+                                {"styleclass": "RequirementRelation"}
+                                if is_requirement_edge
+                                else {}
+                            ),
+                        )
+                    )
 
             if elt.get("reverse", False):
                 source = elt["element"]
@@ -67,6 +123,13 @@ def collector(
             else:
                 source = elt["origin"]
                 target = elt["element"]
+
+            if HAS_REQUIREMENTS and isinstance(target, req_mod.Requirement):
+                if target.uuid not in children:
+                    req_box = _makers.make_box(target, no_symbol=True)
+                    children[target.uuid] = req_box
+                    layer_box.children.append(req_box)
+                continue
 
             if not (element_box := children.get(target.uuid)):
                 element_box = _makers.make_box(target, no_symbol=True)
@@ -101,6 +164,10 @@ def collector(
 
                     if (
                         source is not None
+                        and not (
+                            HAS_REQUIREMENTS
+                            and isinstance(source, req_mod.Requirement)
+                        )
                         and source.owner is not None
                         and source.owner.uuid in children
                         and owner.uuid in children
@@ -119,26 +186,81 @@ def collector(
 
 
 def collect_realized(
-    start: m.ModelElement, depth: int
+    start: m.ModelElement, depth: int, include_requirements: bool = False
 ) -> dict[LayerLiteral, list[dict[str, t.Any]]]:
     """Collect all elements from ``realized_`` attributes up to depth."""
-    return collect_elements(start, depth, "ABOVE", "realized")
+    return collect_elements(
+        start,
+        depth,
+        "ABOVE",
+        "realized",
+        include_requirements=include_requirements,
+    )
 
 
 def collect_realizing(
-    start: m.ModelElement, depth: int
+    start: m.ModelElement, depth: int, include_requirements: bool = False
 ) -> dict[LayerLiteral, list[dict[str, t.Any]]]:
     """Collect all elements from ``realizing_`` attributes down to depth."""
-    return collect_elements(start, depth, "BELOW", "realizing")
+    return collect_elements(
+        start,
+        depth,
+        "BELOW",
+        "realizing",
+        include_requirements=include_requirements,
+    )
 
 
 def collect_all(
-    start: m.ModelElement, depth: int
+    start: m.ModelElement, depth: int, include_requirements: bool = False
 ) -> dict[LayerLiteral, list[dict[str, t.Any]]]:
     """Collect all elements in both ABOVE and BELOW directions."""
-    above = collect_realized(start, depth)
-    below = collect_realizing(start, depth)
-    return above | below
+    above = collect_realized(start, depth, include_requirements)
+    below = collect_realizing(start, depth, include_requirements)
+    merged: dict[LayerLiteral, list[dict[str, t.Any]]] = {}
+    for layer, elts in above.items():
+        merged.setdefault(layer, []).extend(elts)
+    for layer, elts in below.items():
+        merged.setdefault(layer, []).extend(elts)
+    return merged
+
+
+def _requirement_neighbors(
+    start: m.ModelElement,
+    exclude: m.ModelElement | None,
+    arrived_via: str | None,
+) -> list[tuple[m.ModelElement, str]]:
+    """Return ``(neighbor, relation_kind)`` pairs linking ``start`` to
+    Requirements.
+
+    For an ordinary element, every ``CapellaIncomingRelation``/
+    ``CapellaOutgoingRelation`` touching it is followed -- both incoming
+    and outgoing relations are checked, regardless of the ABOVE/BELOW
+    search direction.
+
+    For a Requirement (i.e. we're continuing the chain *from* a
+    Requirement we already reached), only the relation *opposite* to
+    ``arrived_via`` is followed. A Requirement is commonly referenced by
+    several unrelated elements; without this restriction, every other
+    element sharing that Requirement -- a "sibling" of the one we came
+    from, not an ancestor/descendant -- would be pulled in as noise.
+    """
+    is_req = HAS_REQUIREMENTS and isinstance(start, req_mod.Requirement)
+    neighbors: list[tuple[m.ModelElement, str]] = []
+    for rel in start.requirements_relations:
+        if isinstance(rel, CapellaIncomingRelation):
+            kind = "incoming"
+        elif isinstance(rel, CapellaOutgoingRelation):
+            kind = "outgoing"
+        else:
+            continue
+        if is_req and arrived_via is not None and kind == arrived_via:
+            continue
+        other = rel.target if rel.source == start else rel.source
+        if other is None or other == exclude:
+            continue
+        neighbors.append((other, kind))
+    return neighbors
 
 
 def collect_elements(
@@ -147,13 +269,29 @@ def collect_elements(
     direction: str,
     attribute_prefix: str,
     origin: m.ModelElement | None = None,
+    include_requirements: bool = False,
+    relation_kind: str | None = None,
 ) -> dict[LayerLiteral, list[dict[str, t.Any]]]:
     """Collect elements based on the specified direction and attribute name."""
-    layer_obj, layer = find_layer(start)
+    is_requirement = HAS_REQUIREMENTS and isinstance(
+        start, req_mod.Requirement
+    )
+    if is_requirement:
+        layer_obj, layer = None, REQUIREMENTS_LAYER
+    else:
+        layer_obj, layer = find_layer(start)
+
     collected_elements: dict[LayerLiteral, list[dict[str, t.Any]]] = {}
     if direction == "ABOVE" or origin is None:
         collected_elements = {
-            layer: [{"element": start, "origin": origin, "layer": layer_obj}]
+            layer: [
+                {
+                    "element": start,
+                    "origin": origin,
+                    "layer": layer_obj,
+                    "relation_kind": relation_kind,
+                }
+            ]
         }
     elif direction == "BELOW" and origin is not None:
         collected_elements = {
@@ -163,31 +301,59 @@ def collect_elements(
                     "origin": start,
                     "layer": layer_obj,
                     "reverse": True,
+                    "relation_kind": relation_kind,
                 }
             ]
         }
 
-    if (
-        (direction == "ABOVE" and layer == "Operational")
-        or (direction == "BELOW" and layer == "Physical")
-        or depth == 0
-    ):
+    if depth == 0:
         return collected_elements
 
-    if isinstance(start, fa.AbstractFunction):
-        attribute_name = f"{attribute_prefix}_functions"
-    elif isinstance(start, oa.OperationalActivity):
-        attribute_name = f"{attribute_prefix}_system_functions"
-    else:
-        assert isinstance(start, cs.Component)
-        attribute_name = f"{attribute_prefix}_components"
-
-    for element in getattr(start, attribute_name, []):
-        sub_collected = collect_elements(
-            element, depth - 1, direction, attribute_prefix, origin=start
+    if not is_requirement:
+        at_boundary = (direction == "ABOVE" and layer == "Operational") or (
+            direction == "BELOW" and layer == "Physical"
         )
-        for sub_layer, sub_elements in sub_collected.items():
-            collected_elements.setdefault(sub_layer, []).extend(sub_elements)
+        if not at_boundary:
+            if isinstance(start, fa.AbstractFunction):
+                attribute_name = f"{attribute_prefix}_functions"
+            elif isinstance(start, oa.OperationalActivity):
+                attribute_name = f"{attribute_prefix}_system_functions"
+            else:
+                assert isinstance(start, cs.Component)
+                attribute_name = f"{attribute_prefix}_components"
+
+            for element in getattr(start, attribute_name, []):
+                sub_collected = collect_elements(
+                    element,
+                    depth - 1,
+                    direction,
+                    attribute_prefix,
+                    origin=start,
+                    include_requirements=include_requirements,
+                )
+                for sub_layer, sub_elements in sub_collected.items():
+                    collected_elements.setdefault(sub_layer, []).extend(
+                        sub_elements
+                    )
+
+    if include_requirements and HAS_REQUIREMENTS:
+        for neighbor, kind in _requirement_neighbors(
+            start, origin, relation_kind
+        ):
+            sub_collected = collect_elements(
+                neighbor,
+                depth - 1,
+                direction,
+                attribute_prefix,
+                origin=start,
+                include_requirements=include_requirements,
+                relation_kind=kind,
+            )
+            for sub_layer, sub_elements in sub_collected.items():
+                collected_elements.setdefault(sub_layer, []).extend(
+                    sub_elements
+                )
+
     return collected_elements
 
 
@@ -196,6 +362,7 @@ LayerLiteral = (
     | t.Literal["System"]
     | t.Literal["Logical"]
     | t.Literal["Physical"]
+    | t.Literal["Requirements"]
 )
 
 
@@ -219,7 +386,7 @@ def find_layer(
 
 
 Collector = cabc.Callable[
-    [m.ModelElement, int], dict[LayerLiteral, list[dict[str, t.Any]]]
+    [m.ModelElement, int, bool], dict[LayerLiteral, list[dict[str, t.Any]]]
 ]
 COLLECTORS: dict[str, Collector] = {
     "ALL": collect_all,

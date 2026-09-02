@@ -982,6 +982,7 @@ class RealizationViewDiagram(ContextDiagram):
     _search_direction: t.Literal["ALL", "ABOVE", "BELOW"]
     _show_owners: bool
     _layer_sizing: t.Literal["UNION", "HEIGHT", "WIDTH", "INDIVIDUAL"]
+    _include_requirements: bool
 
     def __init__(
         self,
@@ -997,6 +998,7 @@ class RealizationViewDiagram(ContextDiagram):
             "search_direction": "ALL",
             "show_owners": True,
             "layer_sizing": "WIDTH",
+            "include_requirements": False,
         } | default_render_parameters
         super().__init__(
             class_,
@@ -1030,9 +1032,10 @@ class RealizationViewDiagram(ContextDiagram):
         layout = try_to_layout(data)
         for edge in edges:
             assert isinstance(edge, _elkjs.ELKInputEdge)
+            styleclass = getattr(edge, "styleclass", None) or "Realization"
             layout.children.append(
                 _elkjs.ELKOutputEdge(
-                    id=f"__Realization:{edge.id}",
+                    id=f"__{styleclass}:{edge.id}",
                     type="edge",
                     sourceId=edge.sources[0],
                     targetId=edge.targets[0],
@@ -1051,8 +1054,11 @@ class RealizationViewDiagram(ContextDiagram):
             if layer.type != "node":
                 continue
 
-            layer_obj = self.serializer.model.by_uuid(layer.id)
-            _, layer_name = realization_view.find_layer(layer_obj)
+            if layer.id == realization_view.REQUIREMENTS_LAYER_ID:
+                layer_name = realization_view.REQUIREMENTS_LAYER
+            else:
+                layer_obj = self.serializer.model.by_uuid(layer.id)
+                _, layer_name = realization_view.find_layer(layer_obj)
             pos = layer.position.x, layer.position.y
             size = layer.size.width, layer.size.height
             width, height = chelpers.get_text_extent(layer_name)
