@@ -285,8 +285,14 @@ def get_all_owners(obj: m.ModelElement) -> cabc.Iterator[str]:
     current: m.ModelElement | None = obj
     while current is not None:
         yield current.uuid
-        # Try 'parent' first (for Requirements), fall back to 'owner'
-        current = getattr(current, "parent", None) or getattr(current, "owner", None)
+        # 'owner' is the allocating container (e.g. the Component a
+        # Function is allocated to) and takes priority; 'parent' is only
+        # a fallback for objects without a meaningful 'owner' (e.g.
+        # Requirements, where '.owner' is itself a deprecated alias for
+        # '.parent').
+        current = getattr(current, "owner", None) or getattr(
+            current, "parent", None
+        )
 
 
 def port_collector(
